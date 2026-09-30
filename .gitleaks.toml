@@ -1,0 +1,22 @@
+# Default rules plus the deployment identifiers this public repo must never carry.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "aws-account-id"
+description = "12-digit AWS account ID"
+regex = '''(?:^|[^0-9])([0-9]{12})(?:[^0-9]|$)'''
+secretGroup = 1
+keywords = []
+[rules.allowlist]
+paths = ['''uv\.lock''', '''samples/''']
+# AWS's documented example account, used by the Terraform test mocks. Exact match only.
+regexTarget = "secret"
+regexes = ['''^123456789012$''']
+
+[[rules]]
+id = "slack-ids"
+description = "Slack team or channel ID"
+regex = '''(?i)(?:team_id|channel_id)\s*[=:]\s*"?([TC][0-9A-Z]{8,10})'''
+secretGroup = 1
+keywords = ["team_id", "channel_id"]

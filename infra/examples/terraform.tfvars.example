@@ -1,0 +1,4 @@
+name_prefix = "my"
+region      = "us-east-1"
+image_tag   = "latest"
+# alarm_topic_arns = ["arn:aws:sns:<region>:<account id>:<topic>"]

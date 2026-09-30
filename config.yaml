@@ -1,0 +1,69 @@
+# weather-lake configuration: the single source of what is collected and how.
+# Terraform reads each product's schedule from here; the pipeline reads everything else.
+
+openmeteo:
+  forecast_url: https://api.open-meteo.com/v1/forecast
+  timeout_s: 30
+  max_retries: 2
+  # A scheduled poll gives up well before the next one; the next poll is the retry.
+  request_budget_s: 120
+
+lake:
+  # Overridden by LAKE_ROOT. A local directory offline, s3://<bucket> when deployed.
+  root: ./data
+
+# Every product listed here is collected. A product is one Open-Meteo model: vintages are only
+# comparable within a fixed model, so `best_match` (which switches models) is never used.
+products:
+  openmeteo-gfs-seamless:
+    name: Open-Meteo GFS seamless (HRRR + GFS), hourly
+    model: gfs_seamless
+    forecast_days: 8                 # covers ERCOT's seven-day load forecast in Central time
+    schedule: "cron(25 * * * ? *)"   # hourly, off the top of the hour as Open-Meteo asks
+    stale_after_min: 240             # no new forecast content for 4 h is stale (HRRR runs hourly)
+    # Declared variables and their units are exhaustive: a response that differs fails loudly.
+    variables:
+      temperature_2m: "°C"
+      relative_humidity_2m: "%"
+      dew_point_2m: "°C"
+      apparent_temperature: "°C"
+      wind_speed_10m: "m/s"
+      wind_speed_100m: "m/s"
+      shortwave_radiation: "W/m²"
+      cloud_cover: "%"
+      precipitation: "mm"
+
+# ERCOT's eight weather zones, named exactly as the ERCOT lake's load series name them, each
+# the equal-weight mean of a few representative cities. Changing a point changes what a zone
+# value means: a contract change with a CHANGELOG note.
+zones:
+  Coast:
+    - {name: Houston, lat: 29.7604, lon: -95.3698}
+    - {name: Galveston, lat: 29.3013, lon: -94.7977}
+    - {name: Victoria, lat: 28.8053, lon: -97.0036}
+  East:
+    - {name: Tyler, lat: 32.3513, lon: -95.3011}
+    - {name: Longview, lat: 32.5007, lon: -94.7405}
+    - {name: Lufkin, lat: 31.3382, lon: -94.7291}
+  FarWest:
+    - {name: Midland, lat: 31.9973, lon: -102.0779}
+    - {name: Odessa, lat: 31.8457, lon: -102.3676}
+    - {name: Pecos, lat: 31.4229, lon: -103.4932}
+  North:
+    - {name: Wichita Falls, lat: 33.9137, lon: -98.4934}
+    - {name: Paris, lat: 33.6609, lon: -95.5555}
+  NorthCentral:
+    - {name: Dallas, lat: 32.7767, lon: -96.7970}
+    - {name: Fort Worth, lat: 32.7555, lon: -97.3308}
+    - {name: Waco, lat: 31.5493, lon: -97.1467}
+  SouthCentral:
+    - {name: Austin, lat: 30.2672, lon: -97.7431}
+    - {name: San Antonio, lat: 29.4241, lon: -98.4936}
+    - {name: College Station, lat: 30.6280, lon: -96.3344}
+  Southern:
+    - {name: Corpus Christi, lat: 27.8006, lon: -97.3964}
+    - {name: Brownsville, lat: 25.9017, lon: -97.4975}
+    - {name: Laredo, lat: 27.5306, lon: -99.4803}
+  West:
+    - {name: Abilene, lat: 32.4487, lon: -99.7331}
+    - {name: San Angelo, lat: 31.4638, lon: -100.4370}
