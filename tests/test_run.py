@@ -84,3 +84,19 @@ def test_lake_refuses_to_delete_outside_curated(lake: Lake) -> None:
     lake.write_bytes("raw/x/y", b"1")
     with pytest.raises(PermissionError):
         lake.delete("raw/x/y")
+
+
+def test_the_poll_round_trips_through_the_reader(
+    settings: Settings, lake: Lake, sample: list[dict[str, Any]]
+) -> None:
+    from ingest.catalog import publish_catalog  # noqa: PLC0415
+    from weather_lake import WeatherReader  # noqa: PLC0415
+
+    assert publish_catalog(settings, lake, T0)
+    assert not publish_catalog(settings, lake, T0 + timedelta(hours=1))  # unchanged
+    poll(settings, PRODUCT, lake, _fetch(sample), now=T0)
+    first = datetime.fromtimestamp(sample[0]["hourly"]["time"][0], UTC)
+    with WeatherReader(settings.lake.root) as r:
+        got = r.snapshot(PRODUCT, first, first + timedelta(hours=6), as_of=T0)
+        assert r.products() == [PRODUCT]
+    assert got.num_rows == 432

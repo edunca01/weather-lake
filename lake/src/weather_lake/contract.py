@@ -13,7 +13,7 @@ from typing import Final
 
 import pyarrow as pa
 
-CONTRACT_VERSION: Final = "0.1.0"
+CONTRACT_VERSION: Final = "0.1.1"
 
 # Stored on every curated row. Readers accept the versions they know how to read and refuse
 # anything newer rather than guess at its columns.
@@ -90,6 +90,20 @@ def curated_partition(product: str, valid_date: date) -> str:
 def curated_key(product: str, valid_date: date, posted_at: datetime) -> str:
     """One posting's rows for one valid day. Same posting, same key: re-runs overwrite."""
     return f"{curated_partition(product, valid_date)}part-{stamp(posted_at)}.parquet"
+
+
+def previous_runs_key(product: str, valid_date: date) -> str:
+    """A valid day's backfilled vintages, from one Previous Runs request. One file per valid
+    day, so re-running a backfill window overwrites it."""
+    return f"{curated_partition(product, valid_date)}previous-runs.parquet"
+
+
+def raw_previous_runs_key(product: str, fetched_at: datetime, first: date, last: date) -> str:
+    """A Previous Runs response as received, keyed by fetch time and the valid days it covers."""
+    return (
+        f"{RAW_PREFIX}/{_product(product)}/date={utc_date(fetched_at).isoformat()}"
+        f"/previous-runs-{first.isoformat()}_{last.isoformat()}-{stamp(fetched_at)}.json.gz"
+    )
 
 
 def merged_key(product: str, valid_date: date, compacted_at: datetime) -> str:

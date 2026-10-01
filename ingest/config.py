@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ class _Strict(BaseModel):
 
 class OpenMeteoConfig(_Strict):
     forecast_url: str
+    previous_runs_url: str
     timeout_s: float = Field(gt=0)
     max_retries: int = Field(ge=0)
     request_budget_s: float = Field(gt=0)
@@ -37,6 +39,17 @@ class Point(_Strict):
     lon: float = Field(ge=-180, le=180)
 
 
+class Backfill(_Strict):
+    """Previous Runs: ``<variable>_previous_dayN`` is the value predicted N x 24 h before the
+    valid time, so it was known at ``valid time - N days``; ``publication_lag_min`` is added
+    so a backfilled row is never earlier than a live poll could have seen it."""
+
+    lead_days: list[int] = Field(min_length=1)
+    publication_lag_min: int = Field(ge=0)
+    window_days: int = Field(ge=1, le=31)
+    earliest: date
+
+
 class Product(_Strict):
     key: str
     name: str
@@ -45,6 +58,7 @@ class Product(_Strict):
     schedule: str
     stale_after_min: int = Field(gt=0)
     variables: dict[str, str] = Field(min_length=1)  # variable -> expected unit
+    backfill: Backfill | None = None
 
 
 class Settings(_Strict):

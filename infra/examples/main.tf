@@ -42,3 +42,15 @@ module "observability" {
   stale_after_min      = local.stale_after_min
   alarm_topic_arns     = var.alarm_topic_arns
 }
+
+module "ci" {
+  source = "../modules/ci"
+  count  = var.github_sub_prefix == null ? 0 : 1
+
+  account_id          = data.aws_caller_identity.current.account_id
+  region              = var.region
+  github_sub_prefixes = [var.github_sub_prefix]
+  tfstate_bucket      = var.tfstate_bucket
+  lake_bucket_arn     = module.storage.lake_bucket_arn
+  ecr_repository_arns = [module.compute.ecr_repository_arn]
+}

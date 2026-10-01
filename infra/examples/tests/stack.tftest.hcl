@@ -97,8 +97,34 @@ run "no_async_retries" {
   assert {
     condition = (
       aws_lambda_function_event_invoke_config.ingest.maximum_retry_attempts == 0
+      && aws_lambda_function_event_invoke_config.compact.maximum_retry_attempts == 0
       && aws_scheduler_schedule.product["p"].target[0].retry_policy[0].maximum_retry_attempts == 0
+      && aws_scheduler_schedule.compact.target[0].retry_policy[0].maximum_retry_attempts == 0
     )
     error_message = "the next scheduled poll is the retry"
   }
+}
+
+run "ci_roles_are_optional_and_need_a_state_bucket" {
+  command = apply
+
+  variables {
+    github_sub_prefix = "repo:owner/weather-lake-ops"
+    tfstate_bucket    = "test-tfstate"
+  }
+
+  assert {
+    condition     = output.ci_roles != null
+    error_message = "the CI roles exist when a GitHub subject is given"
+  }
+}
+
+run "ci_without_a_state_bucket_is_refused" {
+  command = plan
+
+  variables {
+    github_sub_prefix = "repo:owner/weather-lake-ops"
+  }
+
+  expect_failures = [var.tfstate_bucket]
 }

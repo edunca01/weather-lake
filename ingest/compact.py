@@ -1,0 +1,190 @@
+"""Compaction: merge a curated partition's small files into one.
+
+Live polling writes one ``part-<posted>.parquet`` per posting and valid day: an hourly poll
+over an 8-day horizon adds 8 small files an hour, and each valid day collects ~190 of them.
+Every point-in-time read opens every file of the days it covers, and on S3 each file is a
+request, so small files cost both latency and money. Compaction rewrites them as one
+``merged-<compacted>.parquet``.
+
+Guarantees:
+
+- Only ``curated/`` is touched; raw responses are never read, moved or deleted.
+- Rows are never changed or dropped, duplicates inside a posting included. If an earlier run
+  was interrupted after writing its merged file, the sources it already holds are recognised
+  (every one of their rows is in the newest merged file) and removed instead of merged twice.
+- Files younger than ``MIN_AGE`` (by write time) are left alone: ingest may still be writing
+  that partition, and a backfill writes old postings now.
+- The merged file is written before any source is deleted, so an interruption can leave extra
+  files but never lose rows.
+- A run can be told to stop between partitions (``stop``), so a large backlog is worked
+  through over several runs instead of one being killed mid-partition by its time limit.
+- A partition with a file that differs from the contract (columns, types, or a null in a
+  required column) is skipped and logged, never coerced. A file that differs only in the
+  nullable flag is relabelled, since it holds the same data.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
+import pyarrow as pa
+
+from ingest.config import Product, Settings
+from ingest.lake import Lake
+from weather_lake.contract import BUSINESS_KEY, CURATED_PREFIX, FORECAST_SCHEMA, merged_key
+
+log = logging.getLogger(__name__)
+
+MIN_AGE = timedelta(minutes=60)
+_PARTITION = re.compile(
+    rf"^{CURATED_PREFIX}/(?P<product>[^/]+)/date=(?P<day>\d{{4}}-\d{{2}}-\d{{2}})/"
+)
+_FILE = re.compile(r"/((part|merged)-\d{8}T\d{6}Z|previous-runs)\.parquet$")
+
+
+@dataclass
+class CompactionSummary:
+    product: str
+    partitions_merged: int = 0
+    files_in: int = 0
+    rows: int = 0
+    leftovers_removed: int = 0
+    skipped: list[str] = field(default_factory=list)
+    stopped: bool = False  # out of time: the rest is left for the next run
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "product": self.product,
+            "partitions_merged": self.partitions_merged,
+            "files_in": self.files_in,
+            "rows": self.rows,
+            "leftovers_removed": self.leftovers_removed,
+            "skipped": self.skipped,
+            "stopped": self.stopped,
+        }
+
+
+def compact_product(
+    product: Product,
+    lake: Lake,
+    *,
+    now: datetime,
+    min_age: timedelta = MIN_AGE,
+    stop: Callable[[], bool] | None = None,
+) -> CompactionSummary:
+    """Merge every partition of one product that has more than one old enough file, oldest
+    first, until ``stop()`` says the run is out of time."""
+    summary = CompactionSummary(product.key)
+    partitions: dict[str, list[str]] = {}
+    for key, modified in lake.list_files(f"{CURATED_PREFIX}/{product.key}/"):
+        m = _PARTITION.match(key)
+        if m is None or not _FILE.search(key) or now - modified < min_age:
+            continue
+        partitions.setdefault(m["day"], []).append(key)
+    for day, keys in sorted(partitions.items()):
+        if len(keys) < 2:
+            continue  # one file is already compact; rewriting it would only change its name
+        if stop is not None and stop():
+            summary.stopped = True
+            log.info("%s: out of time; %s onwards left for the next run", product.key, day)
+            break
+        _merge(product, lake, day, keys, now=now, summary=summary)
+    return summary
+
+
+def _merge(  # noqa: PLR0913  (keyword-only after the partition)
+    product: Product,
+    lake: Lake,
+    day: str,
+    keys: list[str],
+    *,
+    now: datetime,
+    summary: CompactionSummary,
+) -> None:
+    read = {k: _to_contract(lake.read_table(k), FORECAST_SCHEMA) for k in keys}
+    if any(t is None for t in read.values()):
+        log.warning("%s %s: a file does not match the contract; left as it is", product.key, day)
+        summary.skipped.append(day)
+        return
+    tables = {k: t for k, t in read.items() if t is not None}
+    leftovers = _already_merged(tables)
+    to_merge = [t for k, t in tables.items() if k not in leftovers]
+    merged = pa.concat_tables(to_merge)
+    # Sorted by business key then posting: neighbouring rows compress well, and a reader's
+    # dedupe scans them in order.
+    columns = (*BUSINESS_KEY, "posted_at", "ingested_at")
+    order: list[tuple[str, Literal["ascending", "descending"]]] = [
+        (c, "ascending") for c in columns
+    ]
+    merged = merged.sort_by(order)
+    target = merged_key(product.key, datetime.fromisoformat(day).date(), now)
+    lake.write_table(target, merged)
+    for key in keys:
+        if key != target:  # a same-second rerun overwrote its own merged file
+            lake.delete(key)
+    summary.partitions_merged += 1
+    summary.files_in += len(keys)
+    summary.rows += merged.num_rows
+    summary.leftovers_removed += len(leftovers)
+    log.info("%s %s: %d files, %d rows -> %s", product.key, day, len(keys), merged.num_rows, target)
+
+
+def _to_contract(table: pa.Table, schema: pa.Schema) -> pa.Table | None:
+    """The table under the contract's exact schema, or None when it really differs.
+
+    Writers set the nullable flag loosely; a file with the contract's columns and types and no
+    null in a required column is the same data, so it is relabelled rather than left unmerged
+    forever. Different columns or types, or an actual null, are real differences.
+    """
+    if table.schema.equals(schema):
+        return table
+    if [(f.name, f.type) for f in table.schema] != [(f.name, f.type) for f in schema]:
+        return None
+    if any(not f.nullable and table.column(f.name).null_count for f in schema):
+        return None
+    return table.cast(schema)
+
+
+def _already_merged(tables: dict[str, pa.Table]) -> set[str]:
+    """Sources an interrupted run already merged: every row of theirs (with multiplicity) is in
+    the newest merged file, which a completed merge would have deleted them for."""
+    merged = sorted(k for k in tables if "/merged-" in k)
+    if not merged:
+        return set()
+    newest = merged[-1]
+    held = Counter(_rows(tables[newest]))
+    out = set()
+    for key, table in tables.items():
+        if key == newest:
+            continue
+        rows = Counter(_rows(table))
+        if all(held[r] >= n for r, n in rows.items()):
+            out.add(key)
+    return out
+
+
+def _rows(table: pa.Table) -> list[tuple[Any, ...]]:
+    return [tuple(r.values()) for r in table.to_pylist()]
+
+
+def compact(
+    settings: Settings,
+    lake: Lake,
+    *,
+    now: datetime | None = None,
+    stop: Callable[[], bool] | None = None,
+) -> list[CompactionSummary]:
+    """Compact every configured product, until ``stop()`` says the run is out of time."""
+    when = now or datetime.now(UTC)
+    out = []
+    for p in settings.products.values():
+        out.append(compact_product(p, lake, now=when, stop=stop))
+        if out[-1].stopped:
+            break
+    return out

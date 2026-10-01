@@ -1,6 +1,7 @@
 # Lambda container image for the weather poller. Built for arm64 (Graviton), single-manifest so
 # Lambda accepts it.
-#   ingest.handler.ingest   hourly, polls every product and publishes the freshness metric
+#   ingest.handler.ingest    (default)  hourly, polls every product and publishes freshness
+#   ingest.handler.compact              hourly, merges small curated files
 FROM public.ecr.aws/lambda/python:3.12
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.19 /uv /bin/uv

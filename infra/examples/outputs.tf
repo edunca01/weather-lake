@@ -25,3 +25,10 @@ output "schedules" {
 output "alarm_name" {
   value = module.observability.alarm_name
 }
+
+output "ci_roles" {
+  value = var.github_sub_prefix == null ? null : {
+    plan   = module.ci[0].plan_role_arn
+    deploy = module.ci[0].deploy_role_arn
+  }
+}

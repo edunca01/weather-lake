@@ -89,3 +89,25 @@ def test_a_client_error_is_not_retried(settings: Settings, sleeps: list[float]) 
 def test_params_format(settings: Settings) -> None:
     p = forecast_params(settings.product(PRODUCT), [settings.points()[0][1]])
     assert p["latitude"] == "29.7604" and p["forecast_days"] == 8
+
+
+def test_previous_runs_asks_for_every_variable_and_lead(
+    settings: Settings, sleeps: list[float]
+) -> None:
+    from datetime import date  # noqa: PLC0415
+
+    seen: list[httpx.Request] = []
+
+    def api(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, content=b"[]")
+
+    with _client(settings, api) as c:
+        c.previous_runs(settings.product(PRODUCT), [], [1, 7], date(2024, 1, 1), date(2024, 1, 14))
+    q = seen[0].url
+    assert q.host == "previous-runs-api.open-meteo.com"
+    hourly = q.params["hourly"].split(",")
+    assert "temperature_2m_previous_day1" in hourly and "precipitation_previous_day7" in hourly
+    assert len(hourly) == 2 * 9
+    assert (q.params["start_date"], q.params["end_date"]) == ("2024-01-01", "2024-01-14")
+    assert "forecast_days" not in q.params
