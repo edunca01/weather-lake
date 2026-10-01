@@ -9,6 +9,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ingest.catalog import publish_catalog
 from ingest.config import Settings, aws_region, load_settings
 from ingest.lake import Lake
 from ingest.openmeteo import OpenMeteoClient
@@ -41,6 +42,7 @@ def run_products(settings: Settings, product: str, *, offline: bool) -> list[Pol
     at the end so the invocation still fails."""
     keys = list(settings.products) if product == "all" else [settings.product(product).key]
     lake = Lake(settings.lake, region=aws_region())
+    publish_catalog(settings, lake, datetime.now(UTC).replace(microsecond=0))
     summaries, failures = [], []
     with OpenMeteoClient(settings.openmeteo) as client:
         for key in keys:
