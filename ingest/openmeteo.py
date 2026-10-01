@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 import httpx
@@ -38,6 +39,23 @@ def forecast_params(product: Product, points: Sequence[Point]) -> dict[str, Any]
     }
 
 
+def previous_runs_params(
+    product: Product, points: Sequence[Point], lead_days: Sequence[int], first: date, last: date
+) -> dict[str, Any]:
+    params = forecast_params(product, points)
+    del params["forecast_days"]
+    params["hourly"] = ",".join(previous_run_variables(product, lead_days))
+    params["start_date"], params["end_date"] = first.isoformat(), last.isoformat()
+    return params
+
+
+def previous_run_variables(product: Product, lead_days: Sequence[int]) -> dict[str, str]:
+    """``<variable>_previous_day<N>`` -> unit, for every declared variable and lead."""
+    return {
+        f"{var}_previous_day{n}": unit for n in lead_days for var, unit in product.variables.items()
+    }
+
+
 class OpenMeteoClient:
     def __init__(self, cfg: OpenMeteoConfig, *, transport: httpx.BaseTransport | None = None):
         self.cfg = cfg
@@ -54,7 +72,21 @@ class OpenMeteoClient:
 
     def forecast(self, product: Product, points: Sequence[Point]) -> bytes:
         """The raw response body, exactly as received."""
-        params = forecast_params(product, points)
+        return self._get(self.cfg.forecast_url, forecast_params(product, points))
+
+    def previous_runs(
+        self,
+        product: Product,
+        points: Sequence[Point],
+        lead_days: Sequence[int],
+        first: date,
+        last: date,
+    ) -> bytes:
+        """Past vintages for valid days ``first..last``, exactly as received."""
+        params = previous_runs_params(product, points, lead_days, first, last)
+        return self._get(self.cfg.previous_runs_url, params)
+
+    def _get(self, url: str, params: dict[str, Any]) -> bytes:
         deadline = time.monotonic() + self.cfg.request_budget_s
         problem, made = "no attempt", 0
         for attempt in range(self.cfg.max_retries + 1):
@@ -65,7 +97,7 @@ class OpenMeteoClient:
             made += 1
             try:
                 resp = self._http.get(
-                    self.cfg.forecast_url, params=params, timeout=min(self.cfg.timeout_s, remaining)
+                    url, params=params, timeout=min(self.cfg.timeout_s, remaining)
                 )
             except httpx.TransportError as exc:
                 problem = type(exc).__name__

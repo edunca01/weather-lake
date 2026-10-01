@@ -6,9 +6,10 @@ import argparse
 import json
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
+from ingest.backfill import backfill
 from ingest.catalog import publish_catalog
 from ingest.config import Settings, aws_region, load_settings
 from ingest.lake import Lake
@@ -75,6 +76,38 @@ def main_ingest(argv: list[str] | None = None) -> int:
     log.info("contract %s, lake %s", CONTRACT_VERSION, settings.lake.root)
     for s in run_products(settings, args.product, offline=args.offline):
         print(json.dumps(s.as_dict()))
+    return 0
+
+
+def main_backfill(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="backfill", description="Backfill past vintages from Open-Meteo's Previous Runs API."
+    )
+    ap.add_argument("--product", required=True)
+    ap.add_argument("--from", dest="first", required=True, type=date.fromisoformat)
+    ap.add_argument("--to", dest="last", required=True, type=date.fromisoformat)
+    ap.add_argument("--pause", type=float, default=5.0, help="seconds between windows")
+    ap.add_argument("--log-level", default="INFO")
+    args = ap.parse_args(argv)
+    configure_logging(args.log_level)
+    settings = load_settings()
+    product = settings.product(args.product)
+    lake = Lake(settings.lake, region=aws_region())
+    publish_catalog(settings, lake, datetime.now(UTC).replace(microsecond=0))
+    points = [pt for _, pt in settings.points()]
+    lead_days = product.backfill.lead_days if product.backfill else []
+    with OpenMeteoClient(settings.openmeteo) as client:
+        summary = backfill(
+            settings,
+            product.key,
+            lake,
+            lambda f, t: client.previous_runs(product, points, lead_days, f, t),
+            args.first,
+            args.last,
+            now=lambda: datetime.now(UTC).replace(microsecond=0),
+            pause_s=args.pause,
+        )
+    print(json.dumps(summary.as_dict()))
     return 0
 
 

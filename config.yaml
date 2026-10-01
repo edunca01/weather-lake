@@ -3,6 +3,7 @@
 
 openmeteo:
   forecast_url: https://api.open-meteo.com/v1/forecast
+  previous_runs_url: https://previous-runs-api.open-meteo.com/v1/forecast
   timeout_s: 30
   max_retries: 2
   # A scheduled poll gives up well before the next one; the next poll is the retry.
@@ -32,6 +33,13 @@ products:
       shortwave_radiation: "W/m²"
       cloud_cover: "%"
       precipitation: "mm"
+    # Vintages before live polling began, from the Previous Runs API. `_previous_dayN` is the
+    # value predicted N x 24 h before the valid time; the lag makes posted_at err late.
+    backfill:
+      lead_days: [1, 2, 3, 4, 5, 6, 7]
+      publication_lag_min: 60
+      window_days: 14          # Open-Meteo counts each 14 days of one location as a call
+      earliest: 2024-01-01     # most variables are archived from January 2024
 
 # ERCOT's eight weather zones, named exactly as the ERCOT lake's load series name them, each
 # the equal-weight mean of a few representative cities. Changing a point changes what a zone
