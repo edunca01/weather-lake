@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup lint fmt typecheck test check ingest samples docker-build tf-fmt tf-validate tf-test clean
+.PHONY: help setup lint fmt typecheck test check ingest backfill compact verify samples docker-build tf-fmt tf-validate tf-test clean
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -26,6 +26,15 @@ check: lint typecheck test ## everything CI runs for Python
 
 ingest: ## poll into $$LAKE_ROOT (PRODUCT=key|all; OFFLINE=1 uses samples/)
 	uv run ingest --product $(or $(PRODUCT),all) $(if $(OFFLINE),--offline,)
+
+backfill: ## past vintages into $$LAKE_ROOT (PRODUCT=key FROM=YYYY-MM-DD TO=YYYY-MM-DD)
+	uv run backfill --product $(or $(PRODUCT),openmeteo-gfs-seamless) --from $(FROM) --to $(TO)
+
+compact: ## merge curated files older than an hour, per partition
+	uv run compact
+
+verify: ## check $$LAKE_ROOT against the contract with DuckDB
+	uv run python -m scripts.verify_lake
 
 samples: ## refresh samples/openmeteo from the live API (first 6 hours)
 	uv run python -m scripts.fetch_sample

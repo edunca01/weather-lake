@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ingest.backfill import backfill
 from ingest.catalog import publish_catalog
+from ingest.compact import compact
 from ingest.config import Settings, aws_region, load_settings
 from ingest.lake import Lake
 from ingest.openmeteo import OpenMeteoClient
@@ -108,6 +109,17 @@ def main_backfill(argv: list[str] | None = None) -> int:
             pause_s=args.pause,
         )
     print(json.dumps(summary.as_dict()))
+    return 0
+
+
+def main_compact(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="compact", description="Merge old small curated files.")
+    ap.add_argument("--log-level", default="INFO")
+    args = ap.parse_args(argv)
+    configure_logging(args.log_level)
+    settings = load_settings()
+    for s in compact(settings, Lake(settings.lake, region=aws_region())):
+        print(json.dumps(s.as_dict()))
     return 0
 
 

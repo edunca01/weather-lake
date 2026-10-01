@@ -3,8 +3,8 @@
 A point-in-time lake of weather **forecasts** for the ERCOT region, kept by the time each
 forecast was known, and aggregated to ERCOT's eight weather zones.
 
-> **Status: early development.** Live collection runs; the reader library, the backfill of
-> past forecast runs and compaction follow.
+> **Status: early development.** Live collection, the point-in-time reader, the backfill of
+> past forecast runs and compaction are in place; the first tagged release follows.
 
 ## Why point-in-time weather
 
@@ -38,6 +38,29 @@ and uses the same zone names as its load series, so the two join on
 
 Curated rows: `interval_start`, `interval_minutes`, `posted_at`, `ingested_at`, `source`,
 `schema_version`, `series` (`<variable>:<Zone>`, e.g. `temperature_2m:NorthCentral`), `value`.
+
+## Reading it
+
+```python
+from datetime import UTC, datetime, timedelta
+from weather_lake import WeatherReader
+
+t = datetime(2026, 10, 2, 18, tzinfo=UTC)
+with WeatherReader("s3://<bucket>", region="us-east-2") as lake:
+    # the forecast for the next day as it was known at t
+    now = lake.snapshot(
+        "openmeteo-gfs-seamless", t, t + timedelta(days=1), as_of=t, series=["temperature_2m:*"]
+    )
+    # every version, for building many decision times with one as-of join
+    vintages = lake.postings("openmeteo-gfs-seamless", t, t + timedelta(days=1), as_of=t)
+```
+
+## Backfill
+
+`make backfill FROM=2024-01-01 TO=2024-01-31` adds vintages from Open-Meteo's Previous Runs
+API, where `<variable>_previous_dayN` is the value predicted N x 24 hours before the valid
+time. Each row is posted at `valid time - N days + 1 hour`: never earlier than a live poll
+could have seen it. Most variables are archived from January 2024.
 
 ## Try it offline
 

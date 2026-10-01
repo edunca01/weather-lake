@@ -36,3 +36,20 @@ variable "contract_path" {
   type        = string
   default     = "../../lake/src/weather_lake/contract.py"
 }
+
+variable "github_sub_prefix" {
+  description = "OIDC subject prefix of the deploying repository; null skips the CI roles."
+  type        = string
+  default     = null
+}
+
+variable "tfstate_bucket" {
+  description = "Bucket holding this root's state (the deploy role reads and writes it)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.github_sub_prefix == null || var.tfstate_bucket != null
+    error_message = "tfstate_bucket is required when github_sub_prefix is set."
+  }
+}

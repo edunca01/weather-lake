@@ -36,6 +36,16 @@ variable "ingest_name" {
   default = "weather-ingest"
 }
 
+variable "compact_name" {
+  type    = string
+  default = "weather-compact"
+}
+
+variable "compact_schedule" {
+  type    = string
+  default = "cron(45 * * * ? *)" # hourly, well after the :25 poll
+}
+
 variable "schedule_group" {
   type    = string
   default = "weather"

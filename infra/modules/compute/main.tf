@@ -1,5 +1,6 @@
-# Compute layer: the image registry, the poller Lambda and its least-privilege role, and one
-# schedule per product read from config.yaml.
+# Compute layer: the image registry, the poller and compaction Lambdas (one image, the handler
+# chosen by the image command) with their least-privilege roles, one schedule per product read
+# from config.yaml, and hourly compaction.
 
 # -- Image registry -------------------------------------------------------------------------
 
@@ -140,7 +141,82 @@ resource "aws_lambda_function_event_invoke_config" "ingest" {
   maximum_event_age_in_seconds = 900
 }
 
-# -- Schedules: one per product (cron from config.yaml, Central time) ------------------------
+# -- Compaction: its own role, the only one that may delete, and only under curated/ ---------
+
+resource "aws_iam_role" "compact" {
+  name               = "${var.compact_name}-lambda"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+data "aws_iam_policy_document" "compact" {
+  statement {
+    sid       = "ListCurated"
+    actions   = ["s3:ListBucket"]
+    resources = [var.lake_bucket_arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${var.curated_prefix}/*"]
+    }
+  }
+
+  statement {
+    sid       = "RewriteCurated"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${var.lake_bucket_arn}/${var.curated_prefix}/*"]
+  }
+
+  statement {
+    sid       = "Logs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.compact.arn}:*"]
+  }
+}
+
+resource "aws_iam_role_policy" "compact" {
+  name   = "${var.compact_name}-lambda"
+  role   = aws_iam_role.compact.id
+  policy = data.aws_iam_policy_document.compact.json
+}
+
+resource "aws_cloudwatch_log_group" "compact" {
+  name              = "/aws/lambda/${var.compact_name}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "compact" {
+  function_name = var.compact_name
+  description   = "Merges curated files older than an hour into one file per partition"
+  role          = aws_iam_role.compact.arn
+  package_type  = "Image"
+  image_uri     = local.image_uri
+  architectures = ["arm64"]
+  memory_size   = 1024
+  timeout       = 600
+
+  image_config {
+    command = ["ingest.handler.compact"]
+  }
+
+  environment {
+    variables = { LAKE_ROOT = "s3://${var.lake_bucket}" }
+  }
+
+  logging_config {
+    log_format = "JSON"
+    log_group  = aws_cloudwatch_log_group.compact.name
+  }
+
+  depends_on = [aws_iam_role_policy.compact]
+}
+
+resource "aws_lambda_function_event_invoke_config" "compact" {
+  function_name                = aws_lambda_function.compact.function_name
+  maximum_retry_attempts       = 0
+  maximum_event_age_in_seconds = 900 # the next hourly run merges whatever this one missed
+}
+
+# -- Schedules: one per product (cron from config.yaml, Central time), hourly compaction -----
 
 resource "aws_scheduler_schedule_group" "weather" {
   name = var.schedule_group
@@ -169,7 +245,7 @@ resource "aws_iam_role" "scheduler" {
 data "aws_iam_policy_document" "scheduler" {
   statement {
     actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.ingest.arn]
+    resources = [aws_lambda_function.ingest.arn, aws_lambda_function.compact.arn]
   }
 }
 
@@ -196,6 +272,29 @@ resource "aws_scheduler_schedule" "product" {
     arn      = aws_lambda_function.ingest.arn
     role_arn = aws_iam_role.scheduler.arn
     input    = jsonencode({ product = each.key })
+
+    retry_policy {
+      maximum_retry_attempts       = 0
+      maximum_event_age_in_seconds = 900
+    }
+  }
+}
+
+resource "aws_scheduler_schedule" "compact" {
+  name                         = var.compact_name
+  group_name                   = aws_scheduler_schedule_group.weather.name
+  description                  = "merge small curated files"
+  schedule_expression          = var.compact_schedule
+  schedule_expression_timezone = var.schedule_timezone
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.compact.arn
+    role_arn = aws_iam_role.scheduler.arn
+    input    = jsonencode({})
 
     retry_policy {
       maximum_retry_attempts       = 0

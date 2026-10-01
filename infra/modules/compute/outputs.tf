@@ -18,3 +18,7 @@ output "ingest_function_name" {
 output "schedules" {
   value = { for k, s in aws_scheduler_schedule.product : k => s.schedule_expression }
 }
+
+output "compact_function_name" {
+  value = aws_lambda_function.compact.function_name
+}
