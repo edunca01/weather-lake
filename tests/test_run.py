@@ -100,3 +100,16 @@ def test_the_poll_round_trips_through_the_reader(
         got = r.snapshot(PRODUCT, first, first + timedelta(hours=6), as_of=T0)
         assert r.products() == [PRODUCT]
     assert got.num_rows == 432
+
+
+def test_read_json_retries_a_torn_read(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
+    lake.write_json("manifests/p/latest.json", {"a": 1})
+    real = lake.read_bytes
+    torn = iter([b'{"a": \x9d', None])
+
+    def flaky(key: str) -> bytes:
+        bad = next(torn)
+        return bad if bad is not None else real(key)
+
+    monkeypatch.setattr(lake, "read_bytes", flaky)
+    assert lake.read_json("manifests/p/latest.json") == {"a": 1}
