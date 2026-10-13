@@ -1,6 +1,6 @@
 [project]
 name = "weather-lake-pipeline"
-version = "0.1.0"
+version = "1.0.0"
 description = "Point-in-time weather forecast lake for the ERCOT region: Open-Meteo -> immutable raw -> Parquet on S3"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

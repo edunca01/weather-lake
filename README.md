@@ -3,8 +3,9 @@
 A point-in-time lake of weather **forecasts** for the ERCOT region, kept by the time each
 forecast was known, and aggregated to ERCOT's eight weather zones.
 
-> **Status: early development.** Live collection, the point-in-time reader, the backfill of
-> past forecast runs and compaction are in place; the first tagged release follows.
+Released as `weather-lake-v1.0.0`: the lake contract ([docs/CONTRACT.md](docs/CONTRACT.md)),
+the decisions behind it ([docs/adr/](docs/adr/)) and the `weather-lake` read library. Changes
+are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Why point-in-time weather
 
@@ -41,6 +42,12 @@ Curated rows: `interval_start`, `interval_minutes`, `posted_at`, `ingested_at`, 
 
 ## Reading it
 
+Install the read library from a release tag (it needs only DuckDB, pyarrow and pydantic):
+
+```
+uv add "weather-lake @ git+https://github.com/edunca01/weather-lake@weather-lake-v1.0.0#subdirectory=lake"
+```
+
 ```python
 from datetime import UTC, datetime, timedelta
 from weather_lake import WeatherReader
@@ -54,6 +61,13 @@ with WeatherReader("s3://<bucket>", region="us-east-2") as lake:
     # every version, for building many decision times with one as-of join
     vintages = lake.postings("openmeteo-gfs-seamless", t, t + timedelta(days=1), as_of=t)
 ```
+
+A deployment publishes its bucket and a read-only IAM policy under `/weather-lake/` in SSM
+Parameter Store ([contract §8](docs/CONTRACT.md#8-cross-repository-outputs-ssm-parameter-store)).
+For training, sync `curated/` and `manifests/` to a local directory and point the reader at
+it: the read rule is the same, and one sync is cheaper than many queries. Times are UTC;
+`precipitation` and `shortwave_radiation` describe the hour *before* their timestamp
+([contract §4](docs/CONTRACT.md#4-tables)).
 
 ## Backfill
 
