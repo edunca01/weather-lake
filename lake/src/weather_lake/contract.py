@@ -13,7 +13,7 @@ from typing import Final
 
 import pyarrow as pa
 
-CONTRACT_VERSION: Final = "0.1.1"
+CONTRACT_VERSION: Final = "1.0.0"
 
 # Stored on every curated row. Readers accept the versions they know how to read and refuse
 # anything newer rather than guess at its columns.

@@ -26,7 +26,7 @@ T1 = datetime(2026, 10, 1, 6, tzinfo=UTC)  # first posting
 T2 = datetime(2026, 10, 1, 9, tzinfo=UTC)  # revision
 
 
-def _catalog(version: str = "0.1.0", schema_version: int = 1) -> dict[str, Any]:
+def _catalog(version: str = "1.0.0", schema_version: int = 1) -> dict[str, Any]:
     return {
         "contract_version": version,
         "generated_at": T1.isoformat(),
@@ -152,8 +152,8 @@ def test_guards(root: Path, tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("catalog", "error"),
     [
-        (_catalog(version="0.2.0"), IncompatibleContractError),
-        (_catalog(version="1.0.0"), IncompatibleContractError),
+        (_catalog(version="0.1.1"), IncompatibleContractError),  # a pre-release lake
+        (_catalog(version="2.0.0"), IncompatibleContractError),
         (_catalog(schema_version=9), UnsupportedSchemaVersionError),
     ],
 )
@@ -161,6 +161,13 @@ def test_incompatible_lakes_are_refused(root: Path, catalog: dict[str, Any], err
     (root / CATALOG_KEY).write_text(json.dumps(catalog))
     with WeatherReader(root) as r, pytest.raises(error):
         r.snapshot(P, H0, H0 + timedelta(hours=1), as_of=T2)
+
+
+def test_a_later_minor_contract_is_read(root: Path) -> None:
+    # 1.x releases only add: a 1.0 reader reads a 1.3 lake.
+    (root / CATALOG_KEY).write_text(json.dumps(_catalog(version="1.3.0")))
+    with WeatherReader(root) as r:
+        assert r.snapshot(P, H0, H0 + timedelta(hours=1), as_of=T2).num_rows > 0
 
 
 def test_unknown_row_schema_versions_are_refused(root: Path) -> None:
